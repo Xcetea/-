@@ -4,35 +4,26 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
     """
     Tokenize the prompt and output strings, and construct a mask that is 1 
     for the response tokens and 0 for other tokens (prompt or padding).
-    
-    Args:
-        prompt_strs: list[str] List of prompt strings.
-        output_strs: list[str] List of output strings.
-        tokenizer: PreTrainedTokenizer Tokenizer to use for tokenization.
-        
-    Returns:
-        dict[str, torch.Tensor] containing input_ids, labels, and response_mask.
     """
     if len(prompt_strs) != len(output_strs):
         raise ValueError("prompt_strs and output_strs must have the same length.")
         
-    # Fallback to 0 if pad_token_id is not set (e.g., standard GPT-2 tokenizer)
+    # Fallback to 0 if pad_token_id is not set
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     
     sequences = []
     masks = []
     
     for prompt, output in zip(prompt_strs, output_strs):
-        # Tokenize prompt (allow special tokens like BOS if configured)
-        prompt_ids = tokenizer.encode(prompt, add_special_tokens=True)
-        # Tokenize output (disable special tokens to prevent duplicate BOS tokens mid-sequence)
+        # 1. Disable special tokens for BOTH to prevent the BOS token (128000)
+        prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         output_ids = tokenizer.encode(output, add_special_tokens=False)
         
-        # Concatenate into full sequence
-        seq = prompt_ids + output_ids
+        # 2. Concatenate and MANUALLY append the EOS token so the model learns to stop
+        seq = prompt_ids + output_ids + [tokenizer.eos_token_id]
         
-        # Construct the raw mask: 0 for prompt tokens, 1 for output tokens
-        mask = [0] * len(prompt_ids) + [1] * len(output_ids)
+        # 3. Construct the mask: 0 for prompt, 1 for output AND the EOS token
+        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         
         sequences.append(seq)
         masks.append(mask)
@@ -50,20 +41,16 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         padded_seq = seq + [pad_token_id] * pad_length
         padded_mask = mask + [0] * pad_length  # Padding tokens get a mask of 0
         
-        # Shift sequences to create inputs and labels
-        # input_ids: Sequence without the last token
-        input_ids_batch.append(padded_seq[:-1])
-        # labels: Sequence without the first token (shifted by 1)
-        labels_batch.append(padded_seq[1:])
-        # response_mask: Same shift as labels so the mask aligns with the token being predicted
-        response_mask_batch.append(padded_mask[1:])
+        # 4. Do NOT shift here. Return the full sequences.
+        input_ids_batch.append(padded_seq)
+        labels_batch.append(padded_seq) # Labels are typically identical to input_ids before the model shifts them
+        response_mask_batch.append(padded_mask)
         
     return {
         "input_ids": torch.tensor(input_ids_batch, dtype=torch.long),
         "labels": torch.tensor(labels_batch, dtype=torch.long),
         "response_mask": torch.tensor(response_mask_batch, dtype=torch.long)
     }
-
 
  
 import torch
