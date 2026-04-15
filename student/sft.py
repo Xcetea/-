@@ -15,15 +15,19 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
     masks = []
     
     for prompt, output in zip(prompt_strs, output_strs):
-        # 1. Disable special tokens for BOTH to prevent the BOS token (128000)
+        # 1. Tokenize prompt alone just to find the boundary length
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
-        output_ids = tokenizer.encode(output, add_special_tokens=False)
+        prompt_len = len(prompt_ids)
         
-        # 2. Concatenate and MANUALLY append the EOS token so the model learns to stop
-        seq = prompt_ids + output_ids + [tokenizer.eos_token_id]
+        # 2. Tokenize the combined string so BPE can merge tokens at the boundary
+        full_text = prompt + output
+        full_ids = tokenizer.encode(full_text, add_special_tokens=False)
         
-        # 3. Construct the mask: 0 for prompt, 1 for output AND the EOS token
-        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
+        # 3. Append the EOS token manually
+        seq = full_ids + [tokenizer.eos_token_id]
+        
+        # 4. Construct the mask: 0 for prompt, 1 for the output and EOS
+        mask = [0] * prompt_len + [1] * (len(seq) - prompt_len)
         
         sequences.append(seq)
         masks.append(mask)
@@ -39,19 +43,20 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         # Apply Right-Padding up to max_len
         pad_length = max_len - len(seq)
         padded_seq = seq + [pad_token_id] * pad_length
-        padded_mask = mask + [0] * pad_length  # Padding tokens get a mask of 0
+        padded_mask = mask + [0] * pad_length  
         
-        # 4. Do NOT shift here. Return the full sequences.
-        input_ids_batch.append(padded_seq)
-        labels_batch.append(padded_seq) # Labels are typically identical to input_ids before the model shifts them
-        response_mask_batch.append(padded_mask)
+        # 5. Restore the shift! 
+        # input_ids loses the last token (often PAD or EOS)
+        # labels loses the first token (shifted 1 into the future)
+        input_ids_batch.append(padded_seq[:-1])
+        labels_batch.append(padded_seq[1:])
+        response_mask_batch.append(padded_mask[1:])
         
     return {
         "input_ids": torch.tensor(input_ids_batch, dtype=torch.long),
         "labels": torch.tensor(labels_batch, dtype=torch.long),
         "response_mask": torch.tensor(response_mask_batch, dtype=torch.long)
     }
-
  
 import torch
 
