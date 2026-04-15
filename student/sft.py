@@ -1,6 +1,10 @@
 import torch
 
 def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], tokenizer) -> dict[str, torch.Tensor]:
+    """
+    Tokenizes the prompt and output separately, concatenates them, and constructs 
+    the necessary tensors for supervised fine-tuning.
+    """
     if len(prompt_strs) != len(output_strs):
         raise ValueError("prompt_strs and output_strs must have the same length.")
         
@@ -10,21 +14,21 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
     masks = []
     
     for prompt, output in zip(prompt_strs, output_strs):
-        # 1. Tokenize separately to get the exact token IDs the test expects
-        # Disable special tokens to prevent duplicate BOS tokens
+        # 1. Tokenize separately as instructed. 
+        # add_special_tokens=False prevents duplicate BOS/EOS from being injected automatically.
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         output_ids = tokenizer.encode(output, add_special_tokens=False)
         
-        # 2. Concatenate and append EOS token
-        seq = prompt_ids + output_ids + [tokenizer.eos_token_id]
+        # 2. Concatenate them together (NO manual EOS appending, the dataset already handles it)
+        seq = prompt_ids + output_ids
         
-        # 3. Construct mask: 0 for prompt, 1 for output AND the EOS token
-        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
+        # 3. Construct mask: 0 for prompt, 1 for the output
+        mask = [0] * len(prompt_ids) + [1] * len(output_ids)
         
         sequences.append(seq)
         masks.append(mask)
         
-    # Determine the maximum sequence length in the batch
+    # Determine the maximum sequence length in the batch (max(prompt_and_output_lens))
     max_len = max(len(seq) for seq in sequences)
     
     input_ids_batch = []
@@ -37,7 +41,10 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         padded_seq = seq + [pad_token_id] * pad_length
         padded_mask = mask + [0] * pad_length  
         
-        # 4. Restore your original, correct shifting logic!
+        # 4. Slice exactly according to instructions:
+        # input_ids: final token sliced off
+        # labels: first token sliced off (shifted input ids)
+        # response_mask: mask on the response tokens in the labels (shifted identically)
         input_ids_batch.append(padded_seq[:-1])
         labels_batch.append(padded_seq[1:])
         response_mask_batch.append(padded_mask[1:])
@@ -47,7 +54,6 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         "labels": torch.tensor(labels_batch, dtype=torch.long),
         "response_mask": torch.tensor(response_mask_batch, dtype=torch.long)
     }
-
 
 import torch
 
