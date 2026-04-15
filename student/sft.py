@@ -1,33 +1,25 @@
 import torch
 
 def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], tokenizer) -> dict[str, torch.Tensor]:
-    """
-    Tokenize the prompt and output strings, and construct a mask that is 1 
-    for the response tokens and 0 for other tokens (prompt or padding).
-    """
     if len(prompt_strs) != len(output_strs):
         raise ValueError("prompt_strs and output_strs must have the same length.")
         
-    # Fallback to 0 if pad_token_id is not set
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     
     sequences = []
     masks = []
     
     for prompt, output in zip(prompt_strs, output_strs):
-        # 1. Tokenize prompt alone just to find the boundary length
+        # 1. Tokenize separately to get the exact token IDs the test expects
+        # Disable special tokens to prevent duplicate BOS tokens
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
-        prompt_len = len(prompt_ids)
+        output_ids = tokenizer.encode(output, add_special_tokens=False)
         
-        # 2. Tokenize the combined string so BPE can merge tokens at the boundary
-        full_text = prompt + output
-        full_ids = tokenizer.encode(full_text, add_special_tokens=False)
+        # 2. Concatenate and append EOS token
+        seq = prompt_ids + output_ids + [tokenizer.eos_token_id]
         
-        # 3. Append the EOS token manually
-        seq = full_ids + [tokenizer.eos_token_id]
-        
-        # 4. Construct the mask: 0 for prompt, 1 for the output and EOS
-        mask = [0] * prompt_len + [1] * (len(seq) - prompt_len)
+        # 3. Construct mask: 0 for prompt, 1 for output AND the EOS token
+        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         
         sequences.append(seq)
         masks.append(mask)
@@ -45,9 +37,7 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         padded_seq = seq + [pad_token_id] * pad_length
         padded_mask = mask + [0] * pad_length  
         
-        # 5. Restore the shift! 
-        # input_ids loses the last token (often PAD or EOS)
-        # labels loses the first token (shifted 1 into the future)
+        # 4. Restore your original, correct shifting logic!
         input_ids_batch.append(padded_seq[:-1])
         labels_batch.append(padded_seq[1:])
         response_mask_batch.append(padded_mask[1:])
@@ -57,7 +47,8 @@ def tokenize_prompt_and_output(prompt_strs: list[str], output_strs: list[str], t
         "labels": torch.tensor(labels_batch, dtype=torch.long),
         "response_mask": torch.tensor(response_mask_batch, dtype=torch.long)
     }
- 
+
+
 import torch
 
 def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
